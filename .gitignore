@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.streamlit/
+*.py[cod]
+data/dirty_input/*.xlsx
+data/clean_output/*.xlsx
