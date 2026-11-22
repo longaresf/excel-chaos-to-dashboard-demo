@@ -14,11 +14,29 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
+from app.i18n import (
+    DEFAULT_LANGUAGE,
+    LABEL_TO_LANGUAGE,
+    SUPPORTED_LANGUAGES,
+    get_audit_metric_cards,
+    localize_dataframe,
+    t,
+)
 from src.cleaner_pipeline import DEFAULT_INPUT_DIR, DEFAULT_OUTPUT_DIR, run_pipeline
 from src.generate_messy_excels import generate_files
 
+# Determine active language before rendering any widgets
+selected_label = st.session_state.get("lang_choice")
+if selected_label and selected_label in LABEL_TO_LANGUAGE:
+    active_lang = LABEL_TO_LANGUAGE[selected_label]
+else:
+    active_lang = st.session_state.get("language", DEFAULT_LANGUAGE)
+if active_lang not in SUPPORTED_LANGUAGES:
+    active_lang = DEFAULT_LANGUAGE
+st.session_state["language"] = active_lang
+
 st.set_page_config(
-    page_title="Spreadsheet Chaos to Executive Visibility",
+    page_title=t("page_title", active_lang),
     page_icon="📊",
     layout="wide",
 )
@@ -26,8 +44,12 @@ st.set_page_config(
 
 def _highlight_raw_rows(frame: pd.DataFrame) -> Any:
     styles = pd.DataFrame("", index=frame.index, columns=frame.columns)
-    styles.loc[frame.duplicated(keep=False), :] = "background-color: #fff1f0"
-    styles[frame.isna()] = "background-color: #fff3cd; color: #7a4f01"
+    styles.loc[frame.duplicated(keep=False), :] = (
+        "background-color: rgba(239, 68, 68, 0.25); color: #fca5a5;"
+    )
+    styles[frame.isna()] = (
+        "background-color: rgba(245, 158, 11, 0.25); color: #fcd34d;"
+    )
     return frame.style.apply(lambda _: styles, axis=None)
 
 
@@ -48,7 +70,7 @@ def _load_saved_result() -> dict:
     with pd.ExcelFile(audit_path) as workbook:
         anomalies = pd.read_excel(workbook, sheet_name="anomalias")
         metric_rows = pd.read_excel(workbook, sheet_name="metricas")
-    metrics = dict(zip(metric_rows["metrica"], metric_rows["valor"]))
+    metrics = dict(zip(metric_rows["metrica"], metric_rows["valor"], strict=False))
     return {
         "sales": sales,
         "anomalies": anomalies,
@@ -59,7 +81,7 @@ def _load_saved_result() -> dict:
     }
 
 
-def _run_pipeline(uploaded_files) -> None:
+def _run_pipeline(uploaded_files, lang: str = DEFAULT_LANGUAGE) -> None:
     try:
         if uploaded_files:
             uploads = [(file.name, file.getvalue()) for file in uploaded_files]
@@ -68,47 +90,55 @@ def _run_pipeline(uploaded_files) -> None:
             generate_files()
             result = run_pipeline()
     except (OSError, ValueError, FileNotFoundError) as error:
-        st.sidebar.error(f"No se pudo completar el pipeline: {error}")
+        st.sidebar.error(t("pipeline_error", lang, error=error))
         return
     st.session_state["pipeline_result"] = result
-    st.sidebar.success("Pipeline ejecutado correctamente.")
+    st.sidebar.success(t("pipeline_success", lang))
 
 
 if "pipeline_result" not in st.session_state:
     st.session_state["pipeline_result"] = _load_saved_result()
 
-st.title("From Spreadsheet Chaos to Executive Visibility")
-st.caption(
-    "A live operations and finance demo: validate, reconcile, and report on "
-    "spreadsheet sales data."
-)
+st.title(t("app_title", active_lang))
+st.caption(t("app_caption", active_lang))
 
 with st.sidebar:
-    st.header("Demo controls")
+    st.selectbox(
+        t("language_selector_label", active_lang),
+        options=["Español", "English"],
+        index=0 if active_lang == "es" else 1,
+        key="lang_choice",
+    )
+    st.header(t("sidebar_header", active_lang))
     uploads = st.file_uploader(
-        "Upload sales and/or cost Excel workbooks",
+        t("uploader_label", active_lang),
         type=["xlsx"],
         accept_multiple_files=True,
-        help="If no cost catalog is uploaded, the demo catalog is used.",
+        help=t("uploader_help", active_lang),
     )
-    if st.button("Run data pipeline", type="primary", use_container_width=True):
-        _run_pipeline(uploads)
-    st.caption("Upload new workbooks or rerun the included demo data.")
+    if st.button(
+        t("run_pipeline_button", active_lang),
+        type="primary",
+        use_container_width=True,
+    ):
+        _run_pipeline(uploads, active_lang)
+    st.caption(t("sidebar_caption", active_lang))
 
 result = st.session_state["pipeline_result"]
 raw_files = sorted(DEFAULT_INPUT_DIR.glob("*.xlsx"))
 problem_tab, audit_tab, dashboard_tab = st.tabs(
-    ["1 · The problem", "2 · Quality audit", "3 · Executive dashboard"]
+    [
+        t("tab_problem", active_lang),
+        t("tab_audit", active_lang),
+        t("tab_dashboard", active_lang),
+    ]
 )
 
 with problem_tab:
-    st.subheader("The problem: spreadsheets do not agree")
-    st.write(
-        "Inspect the original workbooks before standardization. Highlighted rows "
-        "indicate exact duplicates; highlighted cells are blank."
-    )
+    st.subheader(t("problem_subheader", active_lang))
+    st.write(t("problem_description", active_lang))
     if not raw_files:
-        st.info("No demo workbooks found. Run the pipeline to generate the samples.")
+        st.info(t("problem_no_files", active_lang))
     for path in raw_files:
         with st.expander(path.name, expanded=False):
             raw = pd.read_excel(path, engine="openpyxl")
@@ -118,101 +148,143 @@ with problem_tab:
                 hide_index=True,
             )
             st.caption(
-                f"{len(raw):,} rows · {raw.isna().sum().sum():,} blank cells · "
-                f"{int(raw.duplicated().sum()):,} exact duplicate rows"
+                t(
+                    "raw_file_caption",
+                    active_lang,
+                    rows=len(raw),
+                    blanks=int(raw.isna().sum().sum()),
+                    duplicates=int(raw.duplicated().sum()),
+                )
             )
 
 with audit_tab:
-    st.subheader("The quality audit: what the pipeline caught")
+    st.subheader(t("audit_subheader", active_lang))
     metrics = result["metrics"]
     metric_columns = st.columns(4)
-    for column, label, key in zip(
+    for column, (label, key) in zip(
         metric_columns,
-        ("Rows processed", "Duplicates removed", "IDs normalized", "Quarantined"),
-        (
-            "filas_procesadas",
-            "duplicados_eliminados",
-            "ids_normalizados",
-            "filas_en_cuarentena",
-        ),
+        get_audit_metric_cards(active_lang),
+        strict=False,
     ):
         column.metric(label, int(metrics.get(key, 0)))
 
     anomalies = result["anomalies"]
-    st.dataframe(anomalies, use_container_width=True, hide_index=True)
+    st.dataframe(
+        localize_dataframe(anomalies, active_lang),
+        use_container_width=True,
+        hide_index=True,
+    )
     csv = anomalies.to_csv(index=False).encode("utf-8-sig")
     st.download_button(
-        "Download anomaly audit (CSV)",
+        t("download_anomaly_csv", active_lang),
         data=csv,
         file_name="auditoria_anomalias.csv",
         mime="text/csv",
     )
     st.download_button(
-        "Download complete audit (Excel)",
+        t("download_complete_audit_excel", active_lang),
         data=Path(result["audit_path"]).read_bytes(),
         file_name="auditoria_calidad.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
 with dashboard_tab:
-    st.subheader("The clean view: a reliable management dashboard")
+    st.subheader(t("dashboard_subheader", active_lang))
     sales = result["sales"]
     if sales.empty:
-        st.warning("No valid sales rows are available for the dashboard.")
+        st.warning(t("no_sales_warning", active_lang))
     else:
         sales_total = float(sales["ventas_netas"].sum())
         margin_total = float(sales["margen_bruto"].sum())
         margin_rate = margin_total / sales_total if sales_total else 0
         summary_columns = st.columns(3)
-        summary_columns[0].metric("Net sales", f"${sales_total:,.0f}")
-        summary_columns[1].metric("Gross margin", f"${margin_total:,.0f}")
-        summary_columns[2].metric("Gross margin rate", f"{margin_rate:.1%}")
+        summary_columns[0].metric(
+            t("metric_net_sales", active_lang), f"${sales_total:,.0f}"
+        )
+        summary_columns[1].metric(
+            t("metric_gross_margin", active_lang), f"${margin_total:,.0f}"
+        )
+        summary_columns[2].metric(
+            t("metric_margin_rate", active_lang), f"{margin_rate:.1%}"
+        )
+
+        trace_labels = {
+            "ventas_netas": t("label_net_sales", active_lang),
+            "margen_bruto": t("label_gross_margin", active_lang),
+        }
 
         left, right = st.columns(2)
         branch = result["kpis"]["sucursal"]
+        fig_branch = px.bar(
+            branch,
+            x="sucursal",
+            y=["ventas_netas", "margen_bruto"],
+            barmode="group",
+            title=t("chart_branch_title", active_lang),
+            labels={
+                "sucursal": t("label_branch", active_lang),
+                "value": t("label_amount", active_lang),
+                "variable": t("label_metric", active_lang),
+                "ventas_netas": t("label_net_sales", active_lang),
+                "margen_bruto": t("label_gross_margin", active_lang),
+            },
+        )
+        fig_branch.for_each_trace(
+            lambda tr: tr.update(name=trace_labels.get(tr.name, tr.name))
+        )
         left.plotly_chart(
-            px.bar(
-                branch,
-                x="sucursal",
-                y=["ventas_netas", "margen_bruto"],
-                barmode="group",
-                title="Net sales and gross margin by branch",
-                labels={
-                    "sucursal": "Branch",
-                    "value": "Amount",
-                    "variable": "Metric",
-                },
-            ),
+            fig_branch,
             use_container_width=True,
         )
+
         monthly = result["kpis"]["mensual"]
+        fig_monthly = px.line(
+            monthly,
+            x="mes",
+            y=["ventas_netas", "margen_bruto"],
+            markers=True,
+            title=t("chart_monthly_title", active_lang),
+            labels={
+                "mes": t("label_month", active_lang),
+                "value": t("label_amount", active_lang),
+                "variable": t("label_metric", active_lang),
+                "ventas_netas": t("label_net_sales", active_lang),
+                "margen_bruto": t("label_gross_margin", active_lang),
+            },
+        )
+        fig_monthly.for_each_trace(
+            lambda tr: tr.update(name=trace_labels.get(tr.name, tr.name))
+        )
         right.plotly_chart(
-            px.line(
-                monthly,
-                x="mes",
-                y=["ventas_netas", "margen_bruto"],
-                markers=True,
-                title="Monthly sales and gross margin",
-                labels={"mes": "Month", "value": "Amount", "variable": "Metric"},
-            ),
+            fig_monthly,
             use_container_width=True,
+        )
+
+        fig_product = px.bar(
+            result["kpis"]["producto"].head(10),
+            x="sku",
+            y="ventas_netas",
+            title=t("chart_product_title", active_lang),
+            labels={
+                "sku": t("label_sku", active_lang),
+                "ventas_netas": t("label_net_sales", active_lang),
+            },
         )
         st.plotly_chart(
-            px.bar(
-                result["kpis"]["producto"].head(10),
-                x="sku",
-                y="ventas_netas",
-                title="Top products by net sales",
-                labels={"sku": "Product SKU", "ventas_netas": "Net sales"},
-            ),
+            fig_product,
             use_container_width=True,
         )
+
         st.download_button(
-            "Download clean management workbook",
+            t("download_clean_excel", active_lang),
             data=Path(result["clean_path"]).read_bytes(),
             file_name="reporte_gerencial_limpio.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             type="primary",
         )
-        with st.expander("Inspect validated sales"):
-            st.dataframe(sales, use_container_width=True, hide_index=True)
+        with st.expander(t("expander_inspect_sales", active_lang)):
+            st.dataframe(
+                localize_dataframe(sales, active_lang),
+                use_container_width=True,
+                hide_index=True,
+            )

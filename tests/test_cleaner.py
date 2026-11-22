@@ -7,8 +7,8 @@ import pytest
 
 from src.cleaner_pipeline import (
     normalize_tax_id,
-    parse_mixed_date,
     parse_amount,
+    parse_mixed_date,
     run_pipeline,
 )
 
